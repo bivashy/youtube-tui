@@ -42,14 +42,21 @@ ratatui = {version = "0.30", default-features = false, features = ["serde"]}
 unicode-segmentation = "1"
 libmpv-sirno = { version = "2.0.2-fork.1", optional = true }
 
-rustypipe = "0.11"
+rustypipe = { git = "https://github.com/bivashy/rustypipe", branch = "main" }
 futures = { version = "0.3", features = [ "executor" ] }
 tokio = { version = "1", features = [ "rt" ]}
-http_req = "0.14.1"
+http_req = { version = "0.14.1", default-features = false, features = ["rust-tls"] }
 
 # libmpv = { path = "libmpv-rs", optional = true, version = "2" }
 # tui-additions = {path = "../tui-additions", default-features = false, features = ["framework", "widgets"]}
 # invidious = {path = "../Rust/invidious-rs"}
+
+# recent rustypipe changes was broken (not forks fault, probably unmaintained or smth, idk)
+[patch.crates-io]
+# wreq 5.3.0 is yanked on crates.io; redirect to the upstream git tag.
+wreq = { git = "https://github.com/0x676e67/wreq", tag = "v5.3.0" }
+# flexon 0.4.9 fails to compile on current Rust; 0.4.8 works.
+flexon = { git = "https://github.com/cyruspyre/flexon", rev = "ea2409f" }
 
 [package.metadata.docs.rs]
 no-default-features = true
