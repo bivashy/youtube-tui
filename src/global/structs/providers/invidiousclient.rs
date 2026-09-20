@@ -1,6 +1,9 @@
 use invidious::{ClientSync, ClientSyncTrait};
 
-use crate::global::traits::SearchProviderTrait;
+use crate::global::{
+    common::channel::{ChannelPlaylists, ChannelVideos},
+    traits::SearchProviderTrait,
+};
 
 // used in `data.global`
 /// Holds the crate::global::common client
@@ -693,9 +696,27 @@ impl SearchProviderTrait for InvidiousClient {
     fn channel_videos(
         &self,
         id: &str,
-    ) -> Result<Vec<crate::global::common::CommonVideo>, Box<dyn std::error::Error>> {
+    ) -> Result<ChannelVideos, Box<dyn std::error::Error>> {
         match self.0.channel_videos(id, None) {
-            Ok(k) => Ok(k.videos.into_iter().map(|v| v.into()).collect()),
+            Ok(k) => Ok(ChannelVideos {
+                videos: k.videos.into_iter().map(|v| v.into()).collect(),
+                continuation: k.continuation,
+            }),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn channel_videos_continuation(
+        &self,
+        id: &str,
+        continuation: &str,
+    ) -> Result<ChannelVideos, Box<dyn std::error::Error>> {
+        let params = format!("continuation={continuation}");
+        match self.0.channel_videos(id, Some(&params)) {
+            Ok(k) => Ok(ChannelVideos {
+                videos: k.videos.into_iter().map(|v| v.into()).collect(),
+                continuation: k.continuation,
+            }),
             Err(e) => Err(e.into()),
         }
     }
@@ -707,9 +728,27 @@ impl SearchProviderTrait for InvidiousClient {
     fn channel_playlists(
         &self,
         id: &str,
-    ) -> Result<Vec<crate::global::common::CommonPlaylist>, Box<dyn std::error::Error>> {
+    ) -> Result<ChannelPlaylists, Box<dyn std::error::Error>> {
         match self.0.channel_playlists(id, None) {
-            Ok(k) => Ok(k.playlists.into_iter().map(|v| v.into()).collect()),
+            Ok(k) => Ok(ChannelPlaylists {
+                playlists: k.playlists.into_iter().map(|v| v.into()).collect(),
+                continuation: k.continuation,
+            }),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn channel_playlists_continuation(
+        &self,
+        id: &str,
+        continuation: &str,
+    ) -> Result<ChannelPlaylists, Box<dyn std::error::Error>> {
+        let params = format!("continuation={continuation}");
+        match self.0.channel_playlists(id, Some(&params)) {
+            Ok(k) => Ok(ChannelPlaylists {
+                playlists: k.playlists.into_iter().map(|v| v.into()).collect(),
+                continuation: k.continuation,
+            }),
             Err(e) => Err(e.into()),
         }
     }

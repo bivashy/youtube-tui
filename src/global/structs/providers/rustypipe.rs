@@ -1,10 +1,14 @@
 use crate::global::common::{
-    channel::Channel, hidden::SearchItem, universal::Playlist, video::Video, CommonChannel,
-    CommonImage, CommonPlaylist, CommonThumbnail, CommonVideo,
+    channel::{Channel, ChannelPlaylists, ChannelVideos},
+    hidden::SearchItem,
+    universal::Playlist,
+    video::Video,
+    CommonChannel, CommonImage, CommonPlaylist, CommonThumbnail, CommonVideo,
 };
 use rustypipe::{
     client::RustyPipe,
     model::{
+        paginator::ContinuationEndpoint,
         richtext::{ToHtml, ToPlaintext},
         ChannelItem, PlaylistItem, Thumbnail, VideoItem, YouTubeItem,
     },
@@ -395,18 +399,41 @@ impl SearchProviderTrait for RustyPipeWrapper {
         true
     }
 
-    fn channel_videos(&self, id: &str) -> Result<Vec<CommonVideo>, Box<dyn std::error::Error>> {
+    fn channel_videos(&self, id: &str) -> Result<ChannelVideos, Box<dyn std::error::Error>> {
         let res = RUNTIME
             .get()
             .unwrap()
             .block_on(self.0.query().channel_videos(id))?;
 
-        Ok(res
-            .content
-            .items
-            .into_iter()
-            .map(video_item_convert)
-            .collect())
+        Ok(ChannelVideos {
+            videos: res
+                .content
+                .items
+                .into_iter()
+                .map(video_item_convert)
+                .collect(),
+            continuation: res.content.ctoken,
+        })
+    }
+
+    fn channel_videos_continuation(
+        &self,
+        _id: &str,
+        continuation: &str,
+    ) -> Result<ChannelVideos, Box<dyn std::error::Error>> {
+        let res = RUNTIME
+            .get()
+            .unwrap()
+            .block_on(self.0.query().continuation::<VideoItem, _>(
+                continuation,
+                ContinuationEndpoint::Browse,
+                None,
+            ))?;
+
+        Ok(ChannelVideos {
+            videos: res.items.into_iter().map(video_item_convert).collect(),
+            continuation: res.ctoken,
+        })
     }
 
     fn supports_channel_playlists(&self) -> bool {
@@ -416,17 +443,40 @@ impl SearchProviderTrait for RustyPipeWrapper {
     fn channel_playlists(
         &self,
         id: &str,
-    ) -> Result<Vec<CommonPlaylist>, Box<dyn std::error::Error>> {
+    ) -> Result<ChannelPlaylists, Box<dyn std::error::Error>> {
         let res = RUNTIME
             .get()
             .unwrap()
             .block_on(self.0.query().channel_playlists(id))?;
 
-        Ok(res
-            .content
-            .items
-            .into_iter()
-            .map(playlist_item_convert)
-            .collect())
+        Ok(ChannelPlaylists {
+            playlists: res
+                .content
+                .items
+                .into_iter()
+                .map(playlist_item_convert)
+                .collect(),
+            continuation: res.content.ctoken,
+        })
+    }
+
+    fn channel_playlists_continuation(
+        &self,
+        _id: &str,
+        continuation: &str,
+    ) -> Result<ChannelPlaylists, Box<dyn std::error::Error>> {
+        let res = RUNTIME
+            .get()
+            .unwrap()
+            .block_on(self.0.query().continuation::<PlaylistItem, _>(
+                continuation,
+                ContinuationEndpoint::Browse,
+                None,
+            ))?;
+
+        Ok(ChannelPlaylists {
+            playlists: res.items.into_iter().map(playlist_item_convert).collect(),
+            continuation: res.ctoken,
+        })
     }
 }

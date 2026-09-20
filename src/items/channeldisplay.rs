@@ -2,6 +2,7 @@ use super::ItemInfo;
 use crate::{
     config::*,
     global::{
+        common::channel::{ChannelPlaylists, ChannelVideos},
         functions::*,
         structs::*,
         traits::{Collection, SearchProviderWrapper},
@@ -12,10 +13,112 @@ use ratatui::{
     style::Style,
     widgets::{Block, Borders},
 };
+use std::{
+    sync::{Mutex, OnceLock},
+    thread,
+};
 use tui_additions::{
     framework::{FrameworkClean, FrameworkItem},
     widgets::{Grid, TextList},
 };
+
+const PREFETCH_DISTANCE: usize = 5;
+
+struct PrefetchedVideos {
+    page_id: String,
+    result: Result<ChannelVideos, String>,
+}
+
+struct PrefetchedPlaylists {
+    page_id: String,
+    result: Result<ChannelPlaylists, String>,
+}
+
+#[derive(Default)]
+struct ChannelPrefetch {
+    videos_in_flight: Option<String>,
+    videos_ready: Option<PrefetchedVideos>,
+    playlists_in_flight: Option<String>,
+    playlists_ready: Option<PrefetchedPlaylists>,
+}
+
+static CHANNEL_PREFETCH: OnceLock<Mutex<ChannelPrefetch>> = OnceLock::new();
+
+fn channel_prefetch() -> &'static Mutex<ChannelPrefetch> {
+    CHANNEL_PREFETCH.get_or_init(|| Mutex::new(ChannelPrefetch::default()))
+}
+
+fn spawn_videos_prefetch(page_id: String, ctoken: String) {
+    {
+        let mut store = channel_prefetch().lock().unwrap();
+        if store.videos_in_flight.as_deref() == Some(page_id.as_str())
+            || store
+                .videos_ready
+                .as_ref()
+                .is_some_and(|ready| ready.page_id == page_id)
+        {
+            return;
+        }
+        store.videos_in_flight = Some(page_id.clone());
+    }
+
+    let provider = SearchProviderWrapper::provider_clone();
+    thread::spawn(move || {
+        let result = provider
+            .channel_videos_continuation(&page_id, &ctoken)
+            .map_err(|e| e.to_string());
+        let mut store = channel_prefetch().lock().unwrap();
+        store.videos_ready = Some(PrefetchedVideos { page_id, result });
+        store.videos_in_flight = None;
+    });
+}
+
+fn take_videos_prefetch(page_id: &str) -> Option<Result<ChannelVideos, String>> {
+    let mut store = channel_prefetch().lock().unwrap();
+    let ready = store.videos_ready.take()?;
+    if ready.page_id == page_id {
+        Some(ready.result)
+    } else {
+        store.videos_ready = Some(ready);
+        None
+    }
+}
+
+fn spawn_playlists_prefetch(page_id: String, ctoken: String) {
+    {
+        let mut store = channel_prefetch().lock().unwrap();
+        if store.playlists_in_flight.as_deref() == Some(page_id.as_str())
+            || store
+                .playlists_ready
+                .as_ref()
+                .is_some_and(|ready| ready.page_id == page_id)
+        {
+            return;
+        }
+        store.playlists_in_flight = Some(page_id.clone());
+    }
+
+    let provider = SearchProviderWrapper::provider_clone();
+    thread::spawn(move || {
+        let result = provider
+            .channel_playlists_continuation(&page_id, &ctoken)
+            .map_err(|e| e.to_string());
+        let mut store = channel_prefetch().lock().unwrap();
+        store.playlists_ready = Some(PrefetchedPlaylists { page_id, result });
+        store.playlists_in_flight = None;
+    });
+}
+
+fn take_playlists_prefetch(page_id: &str) -> Option<Result<ChannelPlaylists, String>> {
+    let mut store = channel_prefetch().lock().unwrap();
+    let ready = store.playlists_ready.take()?;
+    if ready.page_id == page_id {
+        Some(ready.result)
+    } else {
+        store.playlists_ready = Some(ready);
+        None
+    }
+}
 
 /// the 4 pages that a channel has (including the default "blank" page when loading)
 #[derive(Clone, Default)]
@@ -37,6 +140,7 @@ pub enum ChannelDisplay {
         textlist: TextList,
         iteminfo: Box<ItemInfo>,
         grid: Grid,
+        continuation: Option<String>,
     },
     /// created playlists
     Playlists {
@@ -44,6 +148,7 @@ pub enum ChannelDisplay {
         textlist: TextList,
         iteminfo: Box<ItemInfo>,
         grid: Grid,
+        continuation: Option<String>,
     },
 }
 
@@ -151,7 +256,6 @@ impl ChannelDisplay {
         info: &tui_additions::framework::ItemInfo,
         appearance: &AppearanceConfig,
     ) {
-        // is runs on every render
         match self {
             ChannelDisplay::Main { textlist, grid, .. }
             | ChannelDisplay::Playlists { textlist, grid, .. }
@@ -201,7 +305,6 @@ impl ChannelDisplay {
             Self::Videos {
                 videos, textlist, ..
             } => {
-                // on select loads that in singleitem
                 if !videos.is_empty() {
                     framework
                         .data
@@ -269,6 +372,161 @@ impl ChannelDisplay {
         }
     }
 
+    fn near_end(&self) -> bool {
+        match self {
+            Self::Videos {
+                videos,
+                textlist,
+                continuation,
+                ..
+            } => {
+                continuation.is_some()
+                    && !videos.is_empty()
+                    && textlist.selected + PREFETCH_DISTANCE >= videos.len()
+            }
+            Self::Playlists {
+                playlists,
+                textlist,
+                continuation,
+                ..
+            } => {
+                continuation.is_some()
+                    && !playlists.is_empty()
+                    && textlist.selected + PREFETCH_DISTANCE >= playlists.len()
+            }
+            _ => false,
+        }
+    }
+
+    fn ensure_prefetch(&self, framework: &mut FrameworkClean) {
+        if !self.near_end() {
+            return;
+        }
+        let page_id = framework
+            .data
+            .state
+            .get::<Page>()
+            .unwrap()
+            .channeldisplay()
+            .id
+            .clone();
+
+        match self {
+            Self::Videos { continuation, .. } => {
+                if let Some(ctoken) = continuation.clone() {
+                    spawn_videos_prefetch(page_id, ctoken);
+                }
+            }
+            Self::Playlists { continuation, .. } => {
+                if let Some(ctoken) = continuation.clone() {
+                    spawn_playlists_prefetch(page_id, ctoken);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_prefetch(&mut self, framework: &mut FrameworkClean) -> bool {
+        let page_id = framework
+            .data
+            .state
+            .get::<Page>()
+            .unwrap()
+            .channeldisplay()
+            .id
+            .clone();
+        let (image_index, display_images) = {
+            let config = framework.data.global.get::<MainConfig>().unwrap();
+            (config.image_index, config.images.display())
+        };
+
+        match self {
+            Self::Videos {
+                videos,
+                textlist,
+                continuation,
+                ..
+            } => {
+                let Some(result) = take_videos_prefetch(&page_id) else {
+                    return false;
+                };
+                match result {
+                    Ok(next) => {
+                        *continuation = next.continuation.clone();
+                        if !next.videos.is_empty() {
+                            let new_items = next
+                                .videos
+                                .into_iter()
+                                .map(|video| Item::from_common_video(video, image_index))
+                                .collect::<Vec<_>>();
+                            if display_images {
+                                download_all_images(
+                                    new_items.iter().map(|item| item.into()).collect(),
+                                );
+                            }
+                            videos.extend(new_items);
+                            let _ = textlist.set_items(videos.as_slice());
+                        }
+                        if let Some(ctoken) = continuation.clone() {
+                            spawn_videos_prefetch(page_id, ctoken);
+                        }
+                        true
+                    }
+                    Err(e) => {
+                        *framework.data.global.get_mut::<Message>().unwrap() = Message::Error(e);
+                        false
+                    }
+                }
+            }
+            Self::Playlists {
+                playlists,
+                textlist,
+                continuation,
+                ..
+            } => {
+                let Some(result) = take_playlists_prefetch(&page_id) else {
+                    return false;
+                };
+                match result {
+                    Ok(next) => {
+                        *continuation = next.continuation.clone();
+                        if !next.playlists.is_empty() {
+                            let new_items = next
+                                .playlists
+                                .into_iter()
+                                .map(Item::from_common_playlist)
+                                .collect::<Vec<_>>();
+                            if display_images {
+                                download_all_images(
+                                    new_items.iter().map(|item| item.into()).collect(),
+                                );
+                            }
+                            playlists.extend(new_items);
+                            let _ = textlist.set_items(playlists.as_slice());
+                        }
+                        if let Some(ctoken) = continuation.clone() {
+                            spawn_playlists_prefetch(page_id, ctoken);
+                        }
+                        true
+                    }
+                    Err(e) => {
+                        *framework.data.global.get_mut::<Message>().unwrap() = Message::Error(e);
+                        false
+                    }
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn update_pagination(&mut self, framework: &mut FrameworkClean) {
+        if !self.near_end() {
+            return;
+        }
+        self.ensure_prefetch(framework);
+        self.apply_prefetch(framework);
+    }
+
     /// check if self should be able to be selected
     pub fn selectable(&self) -> bool {
         !matches!(self, Self::None)
@@ -298,11 +556,8 @@ impl FrameworkItem for ChannelDisplay {
             appearance.colors.outline
         });
 
-        // matches itself to render differently depending on the enum variation
         match self {
             Self::None => {
-                // the block is created when rendered because its quite simple and should not be a
-                // performance issue
                 let block = Block::default()
                     .border_type(appearance.borders)
                     .borders(Borders::ALL)
@@ -355,6 +610,8 @@ impl FrameworkItem for ChannelDisplay {
         if !data.contains_key("type") {
             return false;
         }
+
+        self.update_pagination(framework);
 
         let updated = match self {
             Self::None => false,
@@ -452,6 +709,8 @@ impl FrameworkItem for ChannelDisplay {
         key: crossterm::event::KeyEvent,
         _info: tui_additions::framework::ItemInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        self.update_pagination(framework);
+
         let action = if let Some(action) = framework
             .data
             .global
@@ -483,7 +742,6 @@ impl FrameworkItem for ChannelDisplay {
                     _ => false,
                 };
 
-                // only update iteminfo (it requires cloning) if changed and not empty
                 if updated && !videos.is_empty() {
                     framework
                         .data
@@ -548,7 +806,6 @@ impl FrameworkItem for ChannelDisplay {
                 textlist, commands, ..
             } => {
                 let updated = match action {
-                    // move the cursor in the textlist, only update the screen if it is changed
                     KeyAction::MoveUp => textlist.up().is_ok(),
                     KeyAction::MoveDown => textlist.down().is_ok(),
                     KeyAction::MoveLeft | KeyAction::First => textlist.first().is_ok(),
@@ -598,7 +855,6 @@ impl FrameworkItem for ChannelDisplay {
         let appearance = framework.data.global.get::<AppearanceConfig>().unwrap();
         let page = framework.data.state.get::<Page>().unwrap().channeldisplay();
         let page_id = page.id.clone();
-        // let is_main_page = matches!(page.r#type, ChannelDisplayPageType::Main);
 
         match page.r#type {
             ChannelDisplayPageType::Main => {
@@ -634,7 +890,10 @@ impl FrameworkItem for ChannelDisplay {
                 watch_history.push(channel)?;
             }
             ChannelDisplayPageType::Videos => {
-                let videos = SearchProviderWrapper::channel_videos(&page.id)?
+                let channel_videos = SearchProviderWrapper::channel_videos(&page.id)?;
+                let continuation = channel_videos.continuation;
+                let videos = channel_videos
+                    .videos
                     .into_iter()
                     .map(|video| Item::from_common_video(video, mainconfig.image_index))
                     .collect::<Vec<_>>();
@@ -654,10 +913,17 @@ impl FrameworkItem for ChannelDisplay {
                     )?
                     .border_type(appearance.borders),
                     videos,
+                    continuation: continuation.clone(),
                 };
+                if let Some(ctoken) = continuation {
+                    spawn_videos_prefetch(page_id.clone(), ctoken);
+                }
             }
             ChannelDisplayPageType::Playlists => {
-                let playlists = SearchProviderWrapper::channel_playlists(&page.id)?
+                let channel_playlists = SearchProviderWrapper::channel_playlists(&page.id)?;
+                let continuation = channel_playlists.continuation;
+                let playlists = channel_playlists
+                    .playlists
                     .into_iter()
                     .map(Item::from_common_playlist)
                     .collect::<Vec<_>>();
@@ -677,7 +943,11 @@ impl FrameworkItem for ChannelDisplay {
                     )?
                     .border_type(appearance.borders),
                     playlists,
+                    continuation: continuation.clone(),
                 };
+                if let Some(ctoken) = continuation {
+                    spawn_playlists_prefetch(page_id.clone(), ctoken);
+                }
             }
         }
 
@@ -694,16 +964,6 @@ impl FrameworkItem for ChannelDisplay {
                 .into_iter(),
             &mut framework.data.state.get_mut::<StateEnvs>().unwrap().0,
         );
-
-        /*
-        if is_main_page {
-            let channel_history = framework.data.global.get_mut::<ChannelHistory>().unwrap();
-            if !channel_history.0.contains(&page_id) {
-                channel_history.0.push(page_id);
-                let _ = channel_history.save();
-            }
-        }
-        */
 
         Ok(())
     }
@@ -744,7 +1004,6 @@ impl FrameworkItem for ChannelDisplay {
 
                 let y = (y - chunk.y) as usize + textlist.scroll;
 
-                // clicking on already selected item
                 if y == textlist.selected
                     || y == textlist.selected + 2
                     || y == textlist.selected + 1
@@ -753,7 +1012,6 @@ impl FrameworkItem for ChannelDisplay {
                     return true;
                 }
 
-                // clicking on rows after the last item
                 if y > textlist.items.len() + 1 {
                     let _ = textlist.last();
                 } else if y <= textlist.selected {
@@ -764,7 +1022,6 @@ impl FrameworkItem for ChannelDisplay {
 
                 self.update();
 
-                // render the new image
                 framework
                     .data
                     .global

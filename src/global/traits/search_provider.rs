@@ -6,11 +6,11 @@ use std::{
 };
 
 use crate::global::common::{
-    channel::Channel,
+    channel::{Channel, ChannelPlaylists, ChannelVideos},
     hidden::{PopularItem, SearchItem},
     universal::Playlist,
     video::Video,
-    CommonPlaylist, CommonVideo,
+    CommonVideo,
 };
 use dyn_clone::DynClone;
 
@@ -31,15 +31,29 @@ pub trait SearchProviderTrait: DynClone + Send {
     fn supports_channel_videos(&self) -> bool {
         false
     }
-    fn channel_videos(&self, id: &str) -> Result<Vec<CommonVideo>, Box<dyn Error>> {
+    fn channel_videos(&self, id: &str) -> Result<ChannelVideos, Box<dyn Error>> {
         unimplemented!("channel_videos not implemented")
+    }
+    fn channel_videos_continuation(
+        &self,
+        id: &str,
+        continuation: &str,
+    ) -> Result<ChannelVideos, Box<dyn Error>> {
+        unimplemented!("channel_videos_continuation not implemented")
     }
 
     fn supports_channel_playlists(&self) -> bool {
         false
     }
-    fn channel_playlists(&self, id: &str) -> Result<Vec<CommonPlaylist>, Box<dyn Error>> {
+    fn channel_playlists(&self, id: &str) -> Result<ChannelPlaylists, Box<dyn Error>> {
         unimplemented!("channel_playlists not implemented")
+    }
+    fn channel_playlists_continuation(
+        &self,
+        id: &str,
+        continuation: &str,
+    ) -> Result<ChannelPlaylists, Box<dyn Error>> {
+        unimplemented!("channel_playlists_continuation not implemented")
     }
 
     fn supports_trending(&self) -> bool {
@@ -137,6 +151,10 @@ impl SearchProviderWrapper {
             .or_insert(provider.create())
     }
 
+    pub fn provider_clone() -> Box<dyn SearchProviderTrait> {
+        (*Self::get()).clone()
+    }
+
     pub fn channel(id: &str) -> Result<Channel, Box<dyn Error>> {
         let provider = Self::get();
         if !provider.supports_channel() {
@@ -145,7 +163,7 @@ impl SearchProviderWrapper {
         provider.channel(id)
     }
 
-    pub fn channel_videos(id: &str) -> Result<Vec<CommonVideo>, Box<dyn Error>> {
+    pub fn channel_videos(id: &str) -> Result<ChannelVideos, Box<dyn Error>> {
         let provider = Self::get();
         if !provider.supports_channel_videos() {
             return Err(UnsupportedError("channel_videos").into());
@@ -153,12 +171,34 @@ impl SearchProviderWrapper {
         provider.channel_videos(id)
     }
 
-    pub fn channel_playlists(id: &str) -> Result<Vec<CommonPlaylist>, Box<dyn Error>> {
+    pub fn channel_videos_continuation(
+        id: &str,
+        continuation: &str,
+    ) -> Result<ChannelVideos, Box<dyn Error>> {
+        let provider = Self::get();
+        if !provider.supports_channel_videos() {
+            return Err(UnsupportedError("channel_videos").into());
+        }
+        provider.channel_videos_continuation(id, continuation)
+    }
+
+    pub fn channel_playlists(id: &str) -> Result<ChannelPlaylists, Box<dyn Error>> {
         let provider = Self::get();
         if !provider.supports_channel_playlists() {
             return Err(UnsupportedError("channel_playlists").into());
         }
         provider.channel_playlists(id)
+    }
+
+    pub fn channel_playlists_continuation(
+        id: &str,
+        continuation: &str,
+    ) -> Result<ChannelPlaylists, Box<dyn Error>> {
+        let provider = Self::get();
+        if !provider.supports_channel_playlists() {
+            return Err(UnsupportedError("channel_playlists").into());
+        }
+        provider.channel_playlists_continuation(id, continuation)
     }
 
     pub fn trending() -> Result<Vec<CommonVideo>, Box<dyn Error>> {

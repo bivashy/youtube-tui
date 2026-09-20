@@ -195,6 +195,7 @@ fn sync_one(
         });
     }
     let mut videos = SearchProviderWrapper::channel_videos(id)?
+        .videos
         .into_iter()
         .map(|video| {
             Item::from_common_video(video, image_index)
