@@ -961,7 +961,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3259,7 +3259,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3316,7 +3316,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 [[package]]
 name = "rustypipe"
 version = "0.11.4"
-source = "git+https://github.com/bivashy/rustypipe?branch=main#661dcf66527ac4bd8a314472a3ba95bf646fc372"
+source = "git+https://github.com/bivashy/rustypipe?branch=temp#1929e4dcde71c234cbfef3dbd13616ee35158e32"
 dependencies = [
  "data-encoding",
  "fancy-regex 0.18.0",
@@ -3768,7 +3768,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
