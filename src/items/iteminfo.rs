@@ -68,6 +68,7 @@ impl FrameworkItem for ItemInfo {
                         } else {
                             area.width
                         } as u32),
+                        height: Some((area.height as u32 * 3 / 5).max(1)),
                         x: area.x,
                         y: area.y as i16,
                         #[cfg(not(any(feature = "sixel", feature = "halfblock")))]

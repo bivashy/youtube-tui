@@ -734,7 +734,9 @@ impl FrameworkItem for ChannelDisplay {
                     KeyAction::MoveUp => textlist.up().is_ok(),
                     KeyAction::MoveDown => textlist.down().is_ok(),
                     KeyAction::MoveLeft | KeyAction::First => textlist.first().is_ok(),
-                    KeyAction::MoveRight | KeyAction::End => textlist.last().is_ok(),
+                    KeyAction::MoveRight | KeyAction::End => {
+                        !videos.is_empty() && textlist.last().is_ok()
+                    }
                     KeyAction::Select => {
                         self.select_at_cursor(framework);
                         return Ok(());
@@ -777,7 +779,7 @@ impl FrameworkItem for ChannelDisplay {
                     KeyAction::MoveUp => textlist.up().is_ok(),
                     KeyAction::MoveDown => textlist.down().is_ok(),
                     KeyAction::MoveLeft => textlist.first().is_ok(),
-                    KeyAction::MoveRight => textlist.last().is_ok(),
+                    KeyAction::MoveRight => !playlists.is_empty() && textlist.last().is_ok(),
                     KeyAction::Select => {
                         self.select_at_cursor(framework);
                         return Ok(());
@@ -1012,7 +1014,7 @@ impl FrameworkItem for ChannelDisplay {
                     return true;
                 }
 
-                if y > textlist.items.len() + 1 {
+                if !textlist.items.is_empty() && y > textlist.items.len() + 1 {
                     let _ = textlist.last();
                 } else if y <= textlist.selected {
                     textlist.selected = y;

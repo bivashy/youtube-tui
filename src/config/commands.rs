@@ -109,6 +109,7 @@ fn video_default() -> Vec<HashMap<String, String>> {
     let rm_cmd = |pattern: &str| format!("run rm -rf '{pattern}'");
 
     vec![
+        HashMap::from([(String::from("Similar"), String::from("%switch-view%"))]),
         HashMap::from([(
             String::from("Reload updated video"),
             String::from("rmcache ${id} ;; video ${id}"),
@@ -168,6 +169,7 @@ fn saved_video_default() -> Vec<HashMap<String, String>> {
     let rm_cmd = |pattern: &str| format!("run rm {pattern}");
 
     vec![
+        HashMap::from([(String::from("Similar"), String::from("%switch-view%"))]),
         HashMap::from([(
             String::from("Reload updated video"),
             String::from("rmcache ${id} ;; video ${id}"),

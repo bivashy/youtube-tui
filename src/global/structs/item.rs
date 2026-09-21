@@ -30,14 +30,18 @@ impl CollectionItem for Item {
     }
 
     fn children_ids(&self) -> Vec<&str> {
-        if let Self::FullPlaylist(playlist) = self {
-            playlist
+        match self {
+            Self::FullPlaylist(playlist) => playlist
                 .videos
                 .iter()
                 .map(|video| video.id().unwrap())
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
+                .collect::<Vec<_>>(),
+            Self::FullVideo(video) => video
+                .recommendations()
+                .iter()
+                .filter_map(|video| video.id())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
         }
     }
 }
@@ -118,6 +122,19 @@ pub struct FullVideoItem {
     pub likes: String,
     // pub dislikes: Option<String>, TODO
     pub genre: String,
+    /// videos recommended by YouTube (or "related" from other providers)
+    ///
+    /// `None` means the details were cached before recommendations were stored
+    /// (e.g. an old cache), in which case the details should be refetched.
+    #[serde(default)]
+    pub recommended: Option<Vec<Item>>,
+}
+
+impl FullVideoItem {
+    /// the recommended videos, empty if they have not been fetched
+    pub fn recommendations(&self) -> &[Item] {
+        self.recommended.as_deref().unwrap_or_default()
+    }
 }
 
 /// stores information of a viewed playlist
@@ -418,6 +435,35 @@ impl Item {
             description: original.description,
             likes: viewcount_text(original.likes as u64),
             genre: original.genre,
+            recommended: Some(
+                original
+                    .recommended_videos
+                    .into_iter()
+                    .map(|video| Self::from_video_short(video, image_index))
+                    .collect(),
+            ),
+        })
+    }
+
+    /// parse `VideoShort` into `Self`
+    pub fn from_video_short(original: VideoShort, image_index: usize) -> Self {
+        Self::MiniVideo(MiniVideoItem {
+            title: original.title,
+            id: original.id,
+            thumbnail_url: if !original.thumbnails.is_empty() {
+                original.thumbnails[image_index.min(original.thumbnails.len() - 1)]
+                    .url
+                    .clone()
+            } else {
+                "".to_string()
+            },
+            length: secs_display_string(original.length),
+            views: Some(original.views_text),
+            channel: original.author,
+            channel_id: String::new(),
+            timestamp: None,
+            published: None,
+            description: None,
         })
     }
 

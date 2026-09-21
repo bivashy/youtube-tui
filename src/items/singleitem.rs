@@ -43,14 +43,17 @@ pub struct SingleItem {
 #[derive(Clone)]
 pub enum SingleItemType {
     None,
-    Video(SingleVideoItem),
+    Video(Box<SingleVideoItem>),
     Playlist(Box<SinglePlaylistItem>),
 }
 
 #[derive(Clone)]
 pub struct SingleVideoItem {
-    pub textlist: TextList,
+    pub commands_view: TextList,
+    pub similar_view: TextList,
     pub commands: Vec<(String, String)>,
+    pub is_commands_view: bool,
+    pub hovered_video: ItemInfo,
 }
 
 #[derive(Clone)]
@@ -63,18 +66,26 @@ pub struct SinglePlaylistItem {
 }
 
 impl SingleVideoItem {
-    pub fn new(commands: &CommandsConfig, mainconfig: &MainConfig, id: &str) -> Self {
+    pub fn new(
+        commands: &CommandsConfig,
+        mainconfig: &MainConfig,
+        id: &str,
+        recommended: &[Item],
+    ) -> Self {
         let saved = find_library_item(id, mainconfig).is_some();
         if saved {
-            Self::new_with_map(commands.saved_video.clone().into_iter().collect())
+            Self::new_with_map(
+                commands.saved_video.clone().into_iter().collect(),
+                recommended,
+            )
         } else {
-            Self::new_with_map(commands.video.clone().into_iter().collect())
+            Self::new_with_map(commands.video.clone().into_iter().collect(), recommended)
         }
     }
 
-    pub fn new_with_map(commands: Vec<(String, String)>) -> Self {
+    pub fn new_with_map(commands: Vec<(String, String)>, recommended: &[Item]) -> Self {
         Self {
-            textlist: TextList::default()
+            commands_view: TextList::default()
                 .items(
                     &commands
                         .iter()
@@ -82,7 +93,20 @@ impl SingleVideoItem {
                         .collect::<Vec<_>>(),
                 )
                 .unwrap(),
+            similar_view: TextList::default()
+                .items(&{
+                    let mut items = vec!["Switch view"];
+                    items.extend(recommended.iter().map(|item| {
+                        item.minivideo()
+                            .map(|video| video.title.as_str())
+                            .unwrap_or("")
+                    }));
+                    items
+                })
+                .unwrap(),
             commands,
+            is_commands_view: true,
+            hovered_video: ItemInfo::new(recommended.first().cloned()),
         }
     }
 
@@ -100,21 +124,50 @@ impl SingleVideoItem {
         &mut self,
         appearance: &AppearanceConfig,
         iteminfo: &tui_additions::framework::ItemInfo,
+        grid: &mut Grid,
     ) {
-        self.textlist.set_border_type(appearance.borders);
-        self.textlist
-            .set_style(Style::default().fg(appearance.colors.text));
+        if self.is_commands_view {
+            grid.widths = vec![Constraint::Percentage(30), Constraint::Percentage(70)];
+            self.commands_view.set_border_type(appearance.borders);
+            self.commands_view
+                .set_style(Style::default().fg(appearance.colors.text));
 
-        if iteminfo.selected {
-            self.textlist
-                .set_cursor_style(Style::default().fg(appearance.colors.outline_hover));
-            self.textlist
-                .set_selected_style(Style::default().fg(appearance.colors.text_special));
+            if iteminfo.selected {
+                self.commands_view
+                    .set_cursor_style(Style::default().fg(appearance.colors.outline_hover));
+                self.commands_view
+                    .set_selected_style(Style::default().fg(appearance.colors.text_special));
+            } else {
+                self.commands_view
+                    .set_cursor_style(Style::default().fg(appearance.colors.outline_secondary));
+                self.commands_view
+                    .set_selected_style(Style::default().fg(appearance.colors.text_secondary));
+            }
         } else {
-            self.textlist
-                .set_cursor_style(Style::default().fg(appearance.colors.outline_secondary));
-            self.textlist
-                .set_selected_style(Style::default().fg(appearance.colors.text_secondary));
+            grid.widths = if self.similar_view.selected == 0 {
+                vec![Constraint::Percentage(30), Constraint::Percentage(70)]
+            } else {
+                vec![
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(40),
+                    Constraint::Percentage(30),
+                ]
+            };
+            self.similar_view.set_border_type(appearance.borders);
+            self.similar_view
+                .set_style(Style::default().fg(appearance.colors.text));
+
+            if iteminfo.selected {
+                self.similar_view
+                    .set_cursor_style(Style::default().fg(appearance.colors.outline_hover));
+                self.similar_view
+                    .set_selected_style(Style::default().fg(appearance.colors.text_special));
+            } else {
+                self.similar_view
+                    .set_cursor_style(Style::default().fg(appearance.colors.outline_secondary));
+                self.similar_view
+                    .set_selected_style(Style::default().fg(appearance.colors.text_secondary));
+            }
         }
     }
 
@@ -359,7 +412,7 @@ impl SingleItemType {
             Self::Playlist(playlistitem) => {
                 playlistitem.update_appearance(appearance, iteminfo, grid)
             }
-            Self::Video(videoitem) => videoitem.update_appearance(appearance, iteminfo),
+            Self::Video(videoitem) => videoitem.update_appearance(appearance, iteminfo, grid),
         }
     }
 
@@ -438,31 +491,52 @@ impl SingleItem {
             .update_appearance(appearance, iteminfo, &mut self.grid);
     }
 
-    /// update hover item preview
     fn update(&mut self) {
-        if let SingleItemType::Playlist(singleplaylistitem) = &mut self.r#type {
-            let SinglePlaylistItem {
-                hovered_video,
-                videos_view,
-                ..
-            } = &mut **singleplaylistitem;
-            if videos_view.items.is_empty() || videos_view.selected == 0 {
-                hovered_video.item = None;
-                return;
-            }
+        match &mut self.r#type {
+            SingleItemType::Playlist(singleplaylistitem) => {
+                let SinglePlaylistItem {
+                    hovered_video,
+                    videos_view,
+                    ..
+                } = &mut **singleplaylistitem;
+                if videos_view.items.is_empty() || videos_view.selected == 0 {
+                    hovered_video.item = None;
+                    return;
+                }
 
-            if hovered_video.item.is_none()
-                || self.item.as_ref().unwrap().fullplaylist().unwrap().videos
-                    [videos_view.selected - 1]
-                    .id()
-                    != hovered_video.item.as_ref().unwrap().id()
-            {
-                hovered_video.item = Some(
-                    self.item.as_ref().unwrap().fullplaylist().unwrap().videos
+                if hovered_video.item.is_none()
+                    || self.item.as_ref().unwrap().fullplaylist().unwrap().videos
                         [videos_view.selected - 1]
-                        .clone(),
-                );
+                        .id()
+                        != hovered_video.item.as_ref().unwrap().id()
+                {
+                    hovered_video.item = Some(
+                        self.item.as_ref().unwrap().fullplaylist().unwrap().videos
+                            [videos_view.selected - 1]
+                            .clone(),
+                    );
+                }
             }
+            SingleItemType::Video(singlevideoitem) => {
+                if singlevideoitem.is_commands_view || singlevideoitem.similar_view.selected == 0 {
+                    singlevideoitem.hovered_video.item = None;
+                    return;
+                }
+
+                if let Some(item) = self
+                    .item
+                    .as_ref()
+                    .and_then(|item| item.fullvideo().ok())
+                    .and_then(|video| {
+                        video
+                            .recommendations()
+                            .get(singlevideoitem.similar_view.selected - 1)
+                    })
+                {
+                    singlevideoitem.hovered_video.item = Some(item.clone());
+                }
+            }
+            SingleItemType::None => {}
         }
     }
 
@@ -474,18 +548,53 @@ impl SingleItem {
     ) {
         match &mut self.r#type {
             SingleItemType::Video(singlevideoitem) => {
-                let command_string = singlevideoitem.commands[singlevideoitem.textlist.selected]
-                    .1
-                    .clone();
+                if singlevideoitem.is_commands_view {
+                    let command_string = singlevideoitem.commands
+                        [singlevideoitem.commands_view.selected]
+                        .1
+                        .clone();
 
-                // check if the command starts with an ':' which case should be captured
-                framework
-                    .data
-                    .state
-                    .get_mut::<Tasks>()
-                    .unwrap()
-                    .priority
-                    .push(Task::Command(apply_envs(command_string)));
+                    match command_string.as_str() {
+                        "%switch-view%" => {
+                            singlevideoitem.is_commands_view = false;
+                            *framework.data.global.get_mut::<Message>().unwrap() =
+                                Message::Success(String::from("Switched view"));
+                        }
+                        _ => {
+                            framework
+                                .data
+                                .state
+                                .get_mut::<Tasks>()
+                                .unwrap()
+                                .priority
+                                .push(Task::Command(apply_envs(command_string)));
+                        }
+                    }
+                } else if singlevideoitem.similar_view.selected == 0 {
+                    singlevideoitem.is_commands_view = true;
+                    *framework.data.global.get_mut::<Message>().unwrap() =
+                        Message::Success(String::from("Switched view"));
+                } else if let Some(id) = self
+                    .item
+                    .as_ref()
+                    .and_then(|item| item.fullvideo().ok())
+                    .and_then(|video| {
+                        video
+                            .recommendations()
+                            .get(singlevideoitem.similar_view.selected - 1)
+                    })
+                    .and_then(|item| item.id())
+                {
+                    framework
+                        .data
+                        .state
+                        .get_mut::<Tasks>()
+                        .unwrap()
+                        .priority
+                        .push(Task::LoadPage(Page::SingleItem(SingleItemPage::Video(
+                            id.to_string(),
+                        ))));
+                }
             }
             SingleItemType::Playlist(singleplaylistitem) => {
                 let command_string = singleplaylistitem.commands
@@ -541,15 +650,61 @@ impl FrameworkItem for SingleItem {
 
         match &mut self.r#type {
             SingleItemType::None => false,
-            SingleItemType::Video(SingleVideoItem { textlist, .. }) => {
-                data.get("type").is_some_and(|v| {
-                    v.downcast_ref::<String>()
-                        .is_some_and(|v| match v.as_str() {
-                            "scrollup" => textlist.up().is_ok(),
-                            "scrolldown" => textlist.down().is_ok(),
-                            _ => false,
-                        })
-                })
+            SingleItemType::Video(item) => {
+                if item.is_commands_view {
+                    data.get("type").is_some_and(|v| {
+                        v.downcast_ref::<String>()
+                            .is_some_and(|v| match v.as_str() {
+                                "scrollup" => item.commands_view.up().is_ok(),
+                                "scrolldown" => item.commands_view.down().is_ok(),
+                                _ => false,
+                            })
+                    })
+                } else {
+                    let updated = data.get("type").is_some_and(|v| {
+                        v.downcast_ref::<String>()
+                            .is_some_and(|v| match v.as_str() {
+                                "scrollup" => {
+                                    if item.similar_view.selected == 1 {
+                                        framework
+                                            .data
+                                            .state
+                                            .get_mut::<Tasks>()
+                                            .unwrap()
+                                            .priority
+                                            .push(Task::ClearPage);
+                                    }
+                                    item.similar_view.up().is_ok()
+                                }
+                                "scrolldown" => item.similar_view.down().is_ok(),
+                                _ => false,
+                            })
+                    });
+
+                    if updated {
+                        if item.similar_view.selected != 0 {
+                            if let Some(video) = self
+                                .item
+                                .as_ref()
+                                .and_then(|item| item.fullvideo().ok())
+                                .and_then(|video| {
+                                    video.recommendations().get(item.similar_view.selected - 1)
+                                })
+                            {
+                                item.hovered_video.item = Some(video.clone());
+                            }
+                        }
+
+                        framework
+                            .data
+                            .global
+                            .get_mut::<Status>()
+                            .unwrap()
+                            .render_image = true;
+                    }
+
+                    updated
+                }
             }
             SingleItemType::Playlist(item) => {
                 if item.is_commands_view {
@@ -659,25 +814,41 @@ impl FrameworkItem for SingleItem {
 
         match &mut self.r#type {
             SingleItemType::Video(typeinfo) => {
-                // 2 by 1 grid, item info in the first cell and textlist at the second
                 if status.provider_updated {
                     typeinfo.update_provider().into_iter().for_each(|index| {
-                        typeinfo.textlist.items[index] = typeinfo.commands[index].0.clone().replace(
-                            "${provider}",
-                            framework
-                                .data
-                                .global
-                                .get::<Status>()
-                                .unwrap()
-                                .provider
-                                .as_str(),
-                        )
+                        typeinfo.commands_view.items[index] =
+                            typeinfo.commands[index].0.clone().replace(
+                                "${provider}",
+                                framework
+                                    .data
+                                    .global
+                                    .get::<Status>()
+                                    .unwrap()
+                                    .provider
+                                    .as_str(),
+                            )
                     });
                 }
                 self.iteminfo
                     .render(frame, framework, chunks[0], popup_render, info);
-                typeinfo.textlist.set_height(chunks[1].height);
-                frame.render_widget(typeinfo.textlist.clone(), chunks[1]);
+
+                if typeinfo.is_commands_view {
+                    typeinfo.commands_view.set_height(chunks[1].height);
+                    frame.render_widget(typeinfo.commands_view.clone(), chunks[1]);
+                } else {
+                    typeinfo.similar_view.set_height(chunks[1].height);
+                    frame.render_widget(typeinfo.similar_view.clone(), chunks[1]);
+
+                    if typeinfo.similar_view.selected != 0 {
+                        typeinfo.hovered_video.render(
+                            frame,
+                            framework,
+                            chunks[2],
+                            popup_render,
+                            info,
+                        );
+                    }
+                }
             }
             SingleItemType::Playlist(typeinfo) => {
                 // 3 by 1 grid if hovering a video inside the playlist
@@ -747,18 +918,28 @@ impl FrameworkItem for SingleItem {
             SingleItemPage::Video(id) => {
                 let video = if let Some(item) = LocalStore::get_info(id) {
                     is_new = false;
-                    item
+                    if matches!(&item, Item::FullVideo(video) if video.recommended.is_none()) {
+                        match load_video(id, mainconfig) {
+                            Ok(video) => {
+                                is_new = true;
+                                video
+                            }
+                            Err(_) => item,
+                        }
+                    } else {
+                        item
+                    }
                 } else {
                     load_video(id, mainconfig)?
                 };
-                (
-                    video,
-                    SingleItemType::Video(SingleVideoItem::new(
-                        framework.data.global.get::<CommandsConfig>().unwrap(),
-                        mainconfig,
-                        id,
-                    )),
-                )
+                let r#type = SingleItemType::Video(Box::new(SingleVideoItem::new(
+                    framework.data.global.get::<CommandsConfig>().unwrap(),
+                    mainconfig,
+                    id,
+                    video.fullvideo()?.recommendations(),
+                )));
+
+                (video, r#type)
             }
             SingleItemPage::Playlist(id) => {
                 let playlist = if let Some(item) = LocalStore::get_info(id) {
@@ -848,18 +1029,167 @@ impl FrameworkItem for SingleItem {
         };
 
         let updated = match &mut self.r#type {
-            SingleItemType::Video(singlevideoitem) => match action {
-                // move the cursor in the textlist, only update the screen if it is changed
-                KeyAction::MoveUp => singlevideoitem.textlist.up().is_ok(),
-                KeyAction::MoveDown => singlevideoitem.textlist.down().is_ok(),
-                KeyAction::MoveLeft | KeyAction::First => singlevideoitem.textlist.first().is_ok(),
-                KeyAction::MoveRight | KeyAction::End => singlevideoitem.textlist.last().is_ok(),
-                KeyAction::Select => {
-                    self.select_at_cursor(framework);
-                    return Ok(());
+            SingleItemType::Video(singlevideoitem) => {
+                if singlevideoitem.is_commands_view {
+                    match action {
+                        KeyAction::MoveUp => singlevideoitem.commands_view.up().is_ok(),
+                        KeyAction::MoveDown => singlevideoitem.commands_view.down().is_ok(),
+                        KeyAction::MoveLeft | KeyAction::First => {
+                            singlevideoitem.commands_view.first().is_ok()
+                        }
+                        KeyAction::MoveRight | KeyAction::End => {
+                            singlevideoitem.commands_view.last().is_ok()
+                        }
+                        KeyAction::Select => {
+                            self.select_at_cursor(framework);
+                            return Ok(());
+                        }
+                        _ => false,
+                    }
+                } else {
+                    let updated = match action {
+                        KeyAction::MoveUp => {
+                            if singlevideoitem.similar_view.selected == 1 {
+                                framework
+                                    .data
+                                    .state
+                                    .get_mut::<Tasks>()
+                                    .unwrap()
+                                    .priority
+                                    .push(Task::ClearPage);
+                            } else if singlevideoitem.similar_view.selected == 0 {
+                                return Ok(());
+                            }
+
+                            let updated = singlevideoitem.similar_view.up().is_ok();
+                            if singlevideoitem.similar_view.selected != 0 {
+                                if let Some(video) = self
+                                    .item
+                                    .as_ref()
+                                    .and_then(|item| item.fullvideo().ok())
+                                    .and_then(|video| {
+                                        video
+                                            .recommendations()
+                                            .get(singlevideoitem.similar_view.selected - 1)
+                                    })
+                                {
+                                    singlevideoitem.hovered_video.item = Some(video.clone());
+                                }
+                            }
+                            updated
+                        }
+                        KeyAction::MoveDown => {
+                            if singlevideoitem.similar_view.selected
+                                == singlevideoitem.similar_view.items.len() - 1
+                            {
+                                return Ok(());
+                            }
+
+                            let updated = singlevideoitem.similar_view.down().is_ok();
+                            if updated && singlevideoitem.similar_view.selected != 0 {
+                                if let Some(video) = self
+                                    .item
+                                    .as_ref()
+                                    .and_then(|item| item.fullvideo().ok())
+                                    .and_then(|video| {
+                                        video
+                                            .recommendations()
+                                            .get(singlevideoitem.similar_view.selected - 1)
+                                    })
+                                {
+                                    singlevideoitem.hovered_video.item = Some(video.clone());
+                                }
+                            }
+                            updated
+                        }
+                        KeyAction::MoveLeft => {
+                            if singlevideoitem.similar_view.selected != 0 {
+                                framework
+                                    .data
+                                    .state
+                                    .get_mut::<Tasks>()
+                                    .unwrap()
+                                    .priority
+                                    .push(Task::ClearPage);
+                            } else {
+                                return Ok(());
+                            }
+
+                            let updated = singlevideoitem.similar_view.first().is_ok();
+                            singlevideoitem.hovered_video.item = None;
+                            updated
+                        }
+                        KeyAction::MoveRight => {
+                            if singlevideoitem.similar_view.selected
+                                == singlevideoitem.similar_view.items.len() - 1
+                            {
+                                return Ok(());
+                            }
+                            let updated = singlevideoitem.similar_view.last().is_ok();
+                            if updated && singlevideoitem.similar_view.selected != 0 {
+                                if let Some(video) = self
+                                    .item
+                                    .as_ref()
+                                    .and_then(|item| item.fullvideo().ok())
+                                    .and_then(|video| {
+                                        video
+                                            .recommendations()
+                                            .get(singlevideoitem.similar_view.selected - 1)
+                                    })
+                                {
+                                    singlevideoitem.hovered_video.item = Some(video.clone());
+                                }
+                            }
+                            updated
+                        }
+                        KeyAction::Select => {
+                            if singlevideoitem.similar_view.selected == 0 {
+                                singlevideoitem.is_commands_view = true;
+                                self.update_appearance(
+                                    framework.data.global.get::<AppearanceConfig>().unwrap(),
+                                    &info,
+                                );
+                                *framework.data.global.get_mut::<Message>().unwrap() =
+                                    Message::Success(String::from("Switched view"));
+                            } else if let Some(id) = self
+                                .item
+                                .as_ref()
+                                .and_then(|item| item.fullvideo().ok())
+                                .and_then(|video| {
+                                    video
+                                        .recommendations()
+                                        .get(singlevideoitem.similar_view.selected - 1)
+                                })
+                                .and_then(|item| item.id())
+                            {
+                                framework
+                                    .data
+                                    .state
+                                    .get_mut::<Tasks>()
+                                    .unwrap()
+                                    .priority
+                                    .push(Task::LoadPage(Page::SingleItem(SingleItemPage::Video(
+                                        id.to_string(),
+                                    ))));
+                            }
+
+                            true
+                        }
+                        _ => false,
+                    };
+
+                    if updated {
+                        framework
+                            .data
+                            .global
+                            .get_mut::<Status>()
+                            .unwrap()
+                            .render_image = true;
+                    }
+
+                    updated
                 }
-                _ => false,
-            },
+            }
             SingleItemType::Playlist(singleplaylistitem) => {
                 // there are 2 possible states in a playlist item
                 // they are handelled separately
@@ -1051,7 +1381,23 @@ impl FrameworkItem for SingleItem {
         }
 
         let textlist = match &mut self.r#type {
-            SingleItemType::Video(SingleVideoItem { textlist, .. }) => textlist,
+            SingleItemType::Video(singlevideoitem) => {
+                if singlevideoitem.is_commands_view {
+                    &mut singlevideoitem.commands_view
+                } else {
+                    let y = (y - chunk.y) as usize + singlevideoitem.similar_view.scroll;
+                    if singlevideoitem.similar_view.selected != 0 && y == 0 {
+                        framework
+                            .data
+                            .state
+                            .get_mut::<Tasks>()
+                            .unwrap()
+                            .priority
+                            .push(Task::ClearPage);
+                    }
+                    &mut singlevideoitem.similar_view
+                }
+            }
             SingleItemType::Playlist(singleplaylistitem) => {
                 if singleplaylistitem.is_commands_view {
                     &mut singleplaylistitem.commands_view

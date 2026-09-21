@@ -23,7 +23,11 @@ pub fn load_playlist(id: &str, mainconfig: &MainConfig) -> Result<Item, Box<dyn 
 pub fn load_video(id: &str, mainconfig: &MainConfig) -> Result<Item, Box<dyn Error>> {
     let video = Item::from_full_video(SearchProviderWrapper::video(id)?, mainconfig.image_index);
     if mainconfig.images.display() {
-        download_all_images(vec![(&video).into()]);
+        let mut requests = vec![(&video).into()];
+        if let Item::FullVideo(fullvideo) = &video {
+            requests.extend(fullvideo.recommendations().iter().map(|item| item.into()));
+        }
+        download_all_images(requests);
     }
 
     Ok(video)
