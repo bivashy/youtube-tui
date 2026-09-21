@@ -1,6 +1,6 @@
 use crate::global::common::{
     channel::{Channel, ChannelPlaylists, ChannelVideos},
-    hidden::SearchItem,
+    hidden::{SearchItem, VideoShort},
     universal::Playlist,
     video::Video,
     CommonChannel, CommonImage, CommonPlaylist, CommonThumbnail, CommonVideo,
@@ -206,7 +206,22 @@ impl SearchProviderTrait for RustyPipeWrapper {
             adaptive_formats: Vec::new(),   // TODO
             format_streams: Vec::new(),     // TODO
             captions: Vec::new(),           // TODO
-            recommended_videos: Vec::new(), // TODO
+            recommended_videos: details
+                .recommended
+                .items
+                .into_iter()
+                .map(|video| VideoShort {
+                    title: video.name,
+                    id: video.id,
+                    thumbnails: video.thumbnail.into_iter().map(thumbnail_convert).collect(),
+                    author: video
+                        .channel
+                        .map(|c| c.name)
+                        .unwrap_or("Unknown channel".to_string()),
+                    length: video.duration.unwrap_or_default(),
+                    views_text: viewcount_text(video.view_count.unwrap_or(0)),
+                })
+                .collect(),
         })
     }
 
