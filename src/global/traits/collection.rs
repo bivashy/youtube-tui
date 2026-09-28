@@ -3,9 +3,34 @@ use std::{
     error::Error,
     fs::{self, OpenOptions},
     io::Write,
+    path::PathBuf,
 };
 
 use crate::global::functions::paths;
+
+pub(crate) fn atomic_write(path: PathBuf, contents: String) -> Result<(), Box<dyn Error>> {
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "state.json".to_string());
+    let tmp = path
+        .parent()
+        .expect("state file has a parent dir")
+        .join(format!(".{file_name}.tmp"));
+
+    {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+    }
+
+    fs::rename(&tmp, &path)?;
+    Ok(())
+}
 
 pub trait CollectionItem {
     fn id(&self) -> Option<&str>;
@@ -42,16 +67,7 @@ where
                 .collect::<Vec<&str>>(),
         )?;
         let path = paths::data_dir().join(Self::INDEX_PATH);
-
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
-
-        file.write_all(save_string.as_bytes())?;
-
-        Ok(())
+        atomic_write(path, save_string)
     }
 
     /// add an item to watch history
@@ -192,16 +208,7 @@ where
     fn save(&self) -> Result<(), Box<dyn Error>> {
         let save_string = serde_json::to_string_pretty(&self)?;
         let path = paths::data_dir().join(Self::INDEX_PATH);
-
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
-
-        file.write_all(save_string.as_bytes())?;
-
-        Ok(())
+        atomic_write(path, save_string)
     }
 
     /// add an item to watch history

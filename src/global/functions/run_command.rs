@@ -125,6 +125,7 @@ pub fn run_single_command(
             Some(item) => {
                 let library = framework.data.global.get_mut::<Library>().unwrap();
                 let _ = library.push(item);
+                let _ = library.save();
                 *framework.data.global.get_mut::<Message>().unwrap() =
                     Message::Success(String::from("Bookmark added"))
             }
@@ -137,6 +138,7 @@ pub fn run_single_command(
             let library = framework.data.global.get_mut::<Library>().unwrap();
 
             if library.remove(id) {
+                let _ = library.save();
                 *framework.data.global.get_mut::<Message>().unwrap() =
                     Message::Success(String::from("Bookmark removed"))
             } else {
@@ -147,6 +149,7 @@ pub fn run_single_command(
         ["togglemark", id] => {
             let library = framework.data.global.get_mut::<Library>().unwrap();
             if library.remove(id) {
+                let _ = library.save();
                 *framework.data.global.get_mut::<Message>().unwrap() =
                     Message::Success(String::from("Bookmark removed"))
             } else {

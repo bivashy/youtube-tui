@@ -11,8 +11,7 @@ use serde::*;
 use std::{
     error::Error,
     fmt::{Display, Formatter},
-    fs::{self, OpenOptions},
-    io::Write,
+    fs,
     sync::{atomic::AtomicU32, mpsc, Arc},
     thread,
 };
@@ -439,15 +438,9 @@ impl Collection<SubItem> for Subscriptions {
     }
 
     fn save(&self) -> Result<(), Box<dyn Error>> {
-        let mut file = OpenOptions::new()
-            .truncate(true)
-            .write(true)
-            .create(true)
-            .open(crate::global::functions::paths::data_dir().join(Self::INDEX_PATH))?;
-
         let save_string = serde_json::to_string_pretty(self)?;
-        file.write_all(save_string.as_bytes())?;
-        Ok(())
+        let path = crate::global::functions::paths::data_dir().join(Self::INDEX_PATH);
+        crate::global::traits::atomic_write(path, save_string)
     }
 
     fn push(&mut self, _: SubItem) -> Result<(), Box<dyn Error>> {

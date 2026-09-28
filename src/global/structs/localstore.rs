@@ -77,8 +77,25 @@ impl LocalStore {
     }
 
     pub fn set_info(id: String, item: Item, is_new: bool) {
-        let mut store = Self::get_store();
-        store.info.insert(id, LocalRecord { item, is_new });
+        let path = paths::data_dir().join(format!("info/{id}.json"));
+
+        {
+            let mut store = Self::get_store();
+            store.info.insert(
+                id.clone(),
+                LocalRecord {
+                    item: item.clone(),
+                    is_new,
+                },
+            );
+        }
+
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string(&item) {
+            let _ = crate::global::traits::atomic_write(path, json);
+        }
     }
 
     pub fn save_only(ids: &HashSet<String>) {
