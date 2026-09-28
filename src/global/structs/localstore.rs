@@ -8,12 +8,12 @@ use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
     io::Write,
-    sync::OnceLock,
+    sync::{Mutex, MutexGuard, OnceLock},
 };
 
 use crate::global::{functions::paths, structs::Item};
 
-static mut LOCALSTORE: OnceLock<LocalStore> = OnceLock::new();
+static LOCALSTORE: OnceLock<Mutex<LocalStore>> = OnceLock::new();
 
 pub struct LocalRecord {
     item: Item,
@@ -28,25 +28,28 @@ pub struct LocalStore {
 }
 
 impl LocalStore {
-    pub fn add_image(id: String) {
-        unsafe { LOCALSTORE.get_mut() }
+    fn get_store() -> MutexGuard<'static, Self> {
+        LOCALSTORE
+            .get()
+            .expect("LocalStore not initialised; call LocalStore::init() first")
+            .lock()
             .unwrap()
-            .downloaded_images
-            .insert(id);
+    }
+
+    pub fn add_image(id: String) {
+        Self::get_store().downloaded_images.insert(id);
     }
 
     pub fn init() {
-        unsafe {
-            let _ = LOCALSTORE.set(Self::default());
-        }
+        let _ = LOCALSTORE.set(Mutex::new(Self::default()));
     }
 
     pub fn rm_cache(id: &str) -> bool {
-        let res = unsafe { LOCALSTORE.get_mut() }.unwrap().info.remove(id);
-        unsafe { LOCALSTORE.get_mut() }
-            .unwrap()
-            .downloaded_images
-            .remove(id);
+        let mut store = Self::get_store();
+        let res = store.info.remove(id);
+        store.downloaded_images.remove(id);
+        drop(store);
+
         let data = paths::data_dir();
         let info_path = data.join("info");
         let thumbnail_path = data.join("thumbnails");
@@ -57,13 +60,12 @@ impl LocalStore {
     }
 
     pub fn get_info(id: &str) -> Option<Item> {
-        let localstore = unsafe { LOCALSTORE.get_mut() }.unwrap();
+        let store = Self::get_store();
 
-        match localstore.info.get(id) {
+        match store.info.get(id) {
             Some(LocalRecord { item, .. }) => Some(item.clone()),
             None => {
-                let path = paths::data_dir()
-                    .join(format!("info/{id}.json"));
+                let path = paths::data_dir().join(format!("info/{id}.json"));
 
                 if path.exists() {
                     serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?
@@ -75,14 +77,15 @@ impl LocalStore {
     }
 
     pub fn set_info(id: String, item: Item, is_new: bool) {
-        let localstore = unsafe { LOCALSTORE.get_mut() }.unwrap();
-        localstore.info.insert(id, LocalRecord { item, is_new });
+        let mut store = Self::get_store();
+        store.info.insert(id, LocalRecord { item, is_new });
     }
 
     pub fn save_only(ids: &HashSet<String>) {
+        let store = Self::get_store();
         let info_path = paths::data_dir().join("info");
 
-        for (id, LocalRecord { item, is_new }) in unsafe { LOCALSTORE.get() }.unwrap().info.iter() {
+        for (id, LocalRecord { item, is_new }) in store.info.iter() {
             let info = info_path.join(id).with_extension("json");
             if *is_new && ids.contains(id) {
                 let mut file = match OpenOptions::new()
@@ -100,7 +103,11 @@ impl LocalStore {
         }
     }
 
-    pub fn list_downloaded_images() -> &'static HashSet<String> {
-        &unsafe { LOCALSTORE.get() }.unwrap().downloaded_images
+    pub fn list_downloaded_images() -> Vec<String> {
+        Self::get_store()
+            .downloaded_images
+            .iter()
+            .cloned()
+            .collect()
     }
 }

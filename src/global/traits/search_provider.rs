@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fmt::{Debug, Display},
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
 };
 
 use crate::global::common::{
@@ -128,31 +128,23 @@ impl Debug for UnsupportedError {
 
 impl Error for UnsupportedError {}
 
-static mut SEARCH_PROVIDER: OnceLock<SearchProviderWrapper> = OnceLock::new();
+static SEARCH_PROVIDER: OnceLock<Mutex<SearchProviderWrapper>> = OnceLock::new();
 
 impl SearchProviderWrapper {
     pub fn init() {
-        unsafe {
-            if SEARCH_PROVIDER.get().is_some() {
-                *SEARCH_PROVIDER.get_mut().unwrap() = Self::default()
-            } else {
-                let _ = SEARCH_PROVIDER.set(Self::default());
-            }
-        }
+        let _ = SEARCH_PROVIDER.set(Mutex::new(Self::default()));
     }
 
     #[allow(clippy::borrowed_box)]
-    fn get() -> &'static Box<dyn SearchProviderTrait> {
-        let provider = &unsafe { MAIN_CONFIG.get() }.unwrap().search_provider;
-        unsafe { SEARCH_PROVIDER.get_mut() }
-            .unwrap()
-            .0
-            .entry(*provider)
-            .or_insert(provider.create())
+    fn get() -> Box<dyn SearchProviderTrait> {
+        let provider = unsafe { MAIN_CONFIG.get() }.unwrap().search_provider;
+        let mut guard = SEARCH_PROVIDER.get().unwrap().lock().unwrap();
+        let entry = guard.0.entry(provider).or_insert_with(|| provider.create());
+        entry.clone()
     }
 
     pub fn provider_clone() -> Box<dyn SearchProviderTrait> {
-        (*Self::get()).clone()
+        Self::get()
     }
 
     pub fn channel(id: &str) -> Result<Channel, Box<dyn Error>> {

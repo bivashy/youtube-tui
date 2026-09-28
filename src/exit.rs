@@ -65,8 +65,8 @@ pub fn exit(framework: &mut Framework) -> Result<(), Box<dyn Error>> {
     }
 
     for image_id in LocalStore::list_downloaded_images() {
-        if !cached_after.contains(image_id) {
-            let _ = fs::remove_file(thumbnail_path.join(image_id));
+        if !cached_after.contains(&image_id) {
+            let _ = fs::remove_file(thumbnail_path.join(&image_id));
         }
     }
 
